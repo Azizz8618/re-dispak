@@ -33,7 +33,6 @@
 
 # Listings and generated files
 *.lst
-*.txt
 *.b6
 *~
 
