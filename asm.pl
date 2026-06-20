@@ -62,6 +62,7 @@ print B qq/шифр 419999^
 open(F, $src) || die "Where did $src go?\n";
 while (<F>) {
 	chop;
+ 	s/ ,.*$//;  
 	$_ = '*' if /^\b*$/;
 	print B "$_^\n";
 }
