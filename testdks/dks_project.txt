@@ -1,0 +1,474 @@
+/* ==================================================================
+ *  ВСТАВКА В besm6_cpu.c: ЭМУЛЯЦИЯ ПАМЯТИ И ПРЕРЫВАНИЙ КАДОПАМ-КРК
+ *  Заменяет существующие extmem, write_032, read_032.
+ *  Поддержка двух направлений (0 и 1), 16‑разрядного слова Э‑60,
+ *  генерация прерываний ПРП 5,6,7,8,12, автоответ S‑машины.
+ * ==================================================================
+ */
+
+/* Буфер 16‑разрядной памяти КАДОПАМ (64К слов)                    */
+static uint16_t kadopam_mem [65536];
+
+/* Счётчики прерываний для направлений 0 и 1                       */
+static uint16_t intr_cnt [2];
+
+/* Флаги отложенных прерываний                                     */
+static int kadopam_pending = 0;
+static int kadopam_type   = 0;
+
+/* Автоответ S‑машины: 1 – включён, 0 – выключен (для TESTER)      */
+int kadopam_auto_reply = 0;
+
+/* Маски прерываний ПРП (нумерация битов с 0)                      */
+#define PRP_ATTN   (1 << 4)          /* ПРП 5 – внимание/быстрый обмен */
+#define PRP_RECV   (1 << 5)          /* ПРП 6 – готовность приёма      */
+#define PRP_HINP   (1 << 6)          /* ПРП 7 – запрос ввода H‑терм.   */
+#define PRP_XMIT   (1 << 7)          /* ПРП 8 – готовность к передаче  */
+#define PRP_SREQ   (1 << 11)         /* ПРП12 – запрос ввода S‑терм.   */
+
+/* Типы таймерных событий                                          */
+#define KADOPAM_EVENT_SREQ      1
+#define KADOPAM_EVENT_XMIT      2
+#define KADOPAM_EVENT_ATTN      3
+#define KADOPAM_EVENT_SYSREQ    4
+#define KADOPAM_EVENT_RECV      5
+#define KADOPAM_EVENT_TERMREQ   6
+
+/* Таймерный блок                                                  */
+UNIT kadopam_unit = {
+    UDATA (NULL, UNIT_IDLE, 0)
+};
+
+/* Прототипы                                                       */
+t_stat kadopam_svc (UNIT *u);
+extern void dks_write_char (int addr, uint16_t val);
+
+/*
+ * Запись в память КАДОПАМ (команда 132₈).
+ * Младшие 16 бит ACC записываются в kadopam_mem[addr].
+ * Для специальных адресов запускает таймерные события.
+ */
+void write_032 (int addr, t_value val)
+{
+    addr &= 077777;                     /* 15‑битное адресное пространство */
+
+    /* Сохраняем младшие 16 бит                                       */
+    kadopam_mem [addr] = (uint16_t) (val & 0xFFFF);
+
+    switch (addr) {
+
+    /* ── Регистры РКС ─────────────────────────────────────── */
+    case 077775:                        /* адркс0 – прерывание напр.0  */
+        besm6_debug (">>> KDP: запись в адркс0 (077775) = %06o",
+                     kadopam_mem[addr]);
+        kadopam_pending = 1;
+        kadopam_type = KADOPAM_EVENT_SREQ;
+        sim_activate (&kadopam_unit, 2000);
+        break;
+
+    case 077777:                        /* адркс1 – прерывание напр.1  */
+        besm6_debug (">>> KDP: запись в адркс1 (077777) = %06o",
+                     kadopam_mem[addr]);
+        kadopam_pending = 1;
+        kadopam_type = KADOPAM_EVENT_SREQ;
+        sim_activate (&kadopam_unit, 2000);
+        break;
+
+    /* ── Буферы направления 0 ──────────────────────────────── */
+    case 000132:                        /* абуфh[0] – прерывание H‑машины */
+        besm6_debug (">>> KDP: запись в абуфh0 (000132) = %06o",
+                     kadopam_mem[addr]);
+        dks_write_char (addr, (uint16_t)(val & 0xFFFF));
+        kadopam_pending = 1;
+        kadopam_type = KADOPAM_EVENT_XMIT;
+        sim_activate (&kadopam_unit, 2000);
+        break;
+
+    case 000157:                        /* абфосh[0] – системный запрос  */
+        besm6_debug (">>> KDP: запись в абфосh0 (000157) = %06o",
+                     kadopam_mem[addr]);
+        if (kadopam_auto_reply) {
+            kadopam_pending = 1;
+            kadopam_type = KADOPAM_EVENT_SYSREQ;
+            sim_activate (&kadopam_unit, 2000);
+        }
+        break;
+
+    case 000110:                        /* абуфs[0] – запрос S‑терминала  */
+        besm6_debug (">>> KDP: запись в абуфs0 (000110) = %06o",
+                     kadopam_mem[addr]);
+        kadopam_pending = 1;
+        kadopam_type = KADOPAM_EVENT_TERMREQ;
+        sim_activate (&kadopam_unit, 2000);
+        break;
+
+    /* ── Буферы направления 1 ──────────────────────────────── */
+    case 000032:                        /* абуфh[1]                     */
+        besm6_debug (">>> KDP: запись в абуфh1 (000032) = %06o",
+                     kadopam_mem[addr]);
+        dks_write_char (addr, (uint16_t)(val & 0xFFFF));
+        kadopam_pending = 1;
+        kadopam_type = KADOPAM_EVENT_XMIT;
+        sim_activate (&kadopam_unit, 2000);
+        break;
+
+    case 000057:                        /* абфосh[1]                    */
+        besm6_debug (">>> KDP: запись в абфосh1 (000057) = %06o",
+                     kadopam_mem[addr]);
+        if (kadopam_auto_reply) {
+            kadopam_pending = 1;
+            kadopam_type = KADOPAM_EVENT_SYSREQ;
+            sim_activate (&kadopam_unit, 2000);
+        }
+        break;
+
+    case 000010:                        /* абуфs[1]                     */
+        besm6_debug (">>> KDP: запись в абуфs1 (000010) = %06o",
+                     kadopam_mem[addr]);
+        kadopam_pending = 1;
+        kadopam_type = KADOPAM_EVENT_TERMREQ;
+        sim_activate (&kadopam_unit, 2000);
+        break;
+
+    /* ── Эмуляция ВТ‑60 ───────────────────────────────────── */
+    case 077673:                        /* VT60A2 – вывод байта         */
+        {
+            int ch = (int)(val >> 40) & 0xFF;  /* байт в старших разрядах */
+            if (ch == 0) ch = (int)(val >> 32) & 0xFF;
+            if (ch == 0) ch = (int)val & 0xFF;
+            besm6_debug ("=== VT60: выдача символа '%c' (0%03o)",
+                         ch >= 32 ? ch : '.', ch);
+            sim_putchar (ch);            /* вывод на консоль эмулятора */
+        }
+        break;
+
+    default:
+        if ((addr >= 000100 && addr <= 000177) ||
+            (addr >= 000010 && addr <= 000077))
+            besm6_debug (">>> KDP: запись в буфер %06o = %06o",
+                         addr, kadopam_mem[addr]);
+        break;
+    }
+}
+
+/*
+ * Чтение из памяти КАДОПАМ (команда 032₈).
+ * Возвращаемое 48‑разрядное слово формируется так:
+ *   старшие 24 разряда = kadopam_mem[addr] (расшир. до 48),
+ *   младшие 24 разряда = 0 (будут замещены ACC в cmd_033).
+ * Для специальных регистров эмулируется готовность.
+ */
+t_value read_032 (int addr)
+{
+    addr &= 077777;
+    t_value res;
+
+    if (addr == 0) {
+        res = 0400;                     /* бит готовности в младших 24? */
+        besm6_debug ("<<< KDP: чтение из 000000 -> %012llo (готовность)", res);
+        return res;
+    }
+
+    switch (addr) {
+
+    case 077775:                        /* адркс0 – состояние канала 0 */
+        res = (t_value) intr_cnt[0] << 24;
+        besm6_debug ("<<< KDP: чтение из адркс0 (077775) -> счётчик=%04o",
+                     intr_cnt[0]);
+        return res;
+
+    case 077777:                        /* слркс0 – слово состояния     */
+        res = ((t_value) kadopam_mem[addr] | 0400) << 24;
+        besm6_debug ("<<< KDP: чтение из слркс0 (077777) -> %012llo", res);
+        return res;
+
+    case 077776:                        /* тестс7 / слркс1              */
+        res = (t_value) kadopam_mem[addr] << 24;
+        besm6_debug ("<<< KDP: чтение из слркс1 (077776) -> %06o",
+                     kadopam_mem[addr]);
+        return res;
+
+    /* Эмуляция ВТ‑60 – всегда готов, бит 0200                     */
+    case 077672:                        /* VT60A1 – готовность          */
+        res = (t_value) 0200 << 24;
+        besm6_debug ("<<< KDP: чтение из VT60A1 (077672) -> готовность");
+        return res;
+    }
+
+    /* Обычная память: помещаем 16‑битное слово в старшие разряды   */
+    res = (t_value) kadopam_mem[addr] << 24;
+    if ((addr >= 000100 && addr <= 000177) ||
+        (addr >= 000010 && addr <= 000077) ||
+        (addr >= 077672 && addr <= 077673))
+        besm6_debug ("<<< KDP: чтение из %06o -> %06o", addr, kadopam_mem[addr]);
+    return res;
+}
+
+/*
+ * Таймерная функция – генерация прерываний и автоответов.
+ * Вызывается эмулятором по расписанию.
+ */
+t_stat kadopam_svc (UNIT *u)
+{
+    if (!kadopam_pending)
+        return SCPE_OK;
+
+    switch (kadopam_type) {
+
+    case KADOPAM_EVENT_SREQ:
+        besm6_debug ("+++ KDP: генерация прерывания ПРП12 (SREQ)");
+        PRP |= PRP_SREQ;
+        GRP |= GRP_SLAVE;
+        kadopam_pending = 0;
+        break;
+
+    case KADOPAM_EVENT_XMIT:
+        besm6_debug ("+++ KDP: генерация прерывания ПРП8 (XMIT)");
+        PRP |= PRP_XMIT;
+        GRP |= GRP_SLAVE;
+        kadopam_type = KADOPAM_EVENT_ATTN;
+        sim_activate (&kadopam_unit, 2000);
+        break;
+
+    case KADOPAM_EVENT_ATTN:
+        besm6_debug ("+++ KDP: генерация прерывания ПРП5 (ATTN)");
+        PRP |= PRP_ATTN;
+        GRP |= GRP_SLAVE;
+        kadopam_pending = 0;
+        break;
+
+    case KADOPAM_EVENT_SYSREQ:
+        /* Автоответ S‑машины: записываем 2 в абфосs0 (000154)        */
+        besm6_debug ("+++ KDP: автоответ – запись в абфосs0 (000154) = 2");
+        kadopam_mem [000154] = 2;
+        besm6_debug ("+++ KDP: генерация прерывания ПРП12 (SREQ)");
+        PRP |= PRP_SREQ;
+        GRP |= GRP_SLAVE;
+        kadopam_type = KADOPAM_EVENT_RECV;
+        sim_activate (&kadopam_unit, 2000);
+        break;
+
+    case KADOPAM_EVENT_RECV:
+        besm6_debug ("+++ KDP: генерация прерывания ПРП6 (RECV)");
+        PRP |= PRP_RECV;
+        GRP |= GRP_SLAVE;
+        kadopam_pending = 0;
+        break;
+
+    case KADOPAM_EVENT_TERMREQ:
+        besm6_debug ("+++ KDP: генерация прерывания ПРП7 (HINP)");
+        PRP |= PRP_HINP;
+        GRP |= GRP_SLAVE;
+        kadopam_pending = 0;
+        break;
+    }
+
+    return SCPE_OK;
+}
+
+/*
+ * Интерфейс для вызова из besm6_tty.c и других модулей.
+ * Позволяет инициировать прерывание заданного типа.
+ */
+void kadopam_trigger_interrupt (int type)
+{
+    kadopam_pending = 1;
+    kadopam_type   = type;
+    sim_activate (&kadopam_unit, 1000);  /* небольшая задержка */
+}
+/*
+*Важно: 
+*– Убедитесь, что в файл besm6_tty.c добавлена реализация
+*dks_write_char и что в besm6_cpu.c объявлен прототип extern void
+*dks_write_char(int addr, uint16_t val); (можно поместить в начало
+*файла после включений).  
+*– Переменная kadopam_auto_reply теперь
+*объявлена как int kadopam_auto_reply (без статики), чтобы besm6_tty.c
+*мог её изменить при необходимости.  
+*– Массив kadopam_mem и счётчики
+*intr_cnt заменяют старый extmem; старый код write_032/read_032 должен
+*быть удалён.  
+*– В функции cmd_033 обработка case 032 уже использует
+*write_032/read_032 — дополнительных изменений не требуется.  
+*– Для
+*подключения S‑терминала необходимо вызвать dks_connect() из
+*besm6_tty.c и убедиться, что в tty_reset вызывается dks_init(), а в
+*vt_clk — dks_poll().
+*/
+
+1. Добавьте в начало файла (если отсутствует)
+c
+#include <unistd.h>
+2. Замените существующую tty_reset на эту версию
+c
+t_stat tty_reset (DEVICE *dptr)
+{
+    memset(tty_active, 0, sizeof(tty_active));
+    memset(tty_sym, 0, sizeof(tty_sym));
+    memset(tty_typed, 0, sizeof(tty_typed));
+    memset(tty_instate, 0, sizeof(tty_instate));
+    vt_sending = vt_receiving = 0;
+    TTY_IN = TTY_OUT = 0;
+    CONSUL_IN[0] = CONSUL_IN[1] = 0;
+    reg = rus;
+    READY2 |= CONS_READY[0] | CONS_READY[1];
+    if (tty_unit[25].flags & TTY_INVERSE_READY)
+        READY2 &= ~CONS_READY[0];
+    if (tty_unit[26].flags & TTY_INVERSE_READY)
+        READY2 &= ~CONS_READY[1];
+    vt_idle = 1;
+    tty_line[0].conn = 1;
+    PRP |= CONS_CAN_PRINT[0] | CONS_CAN_PRINT[1];
+
+    dks_init ();                        /* <-- инициализация ДКС терминалов */
+
+    return sim_clock_coschedule (tty_unit, 0);
+}
+3. В функцию vt_clk (или аналогичную) добавьте вызов dks_poll
+Найдите конец функции, перед return вставьте:
+
+c
+void vt_clk (UNIT * this)
+{
+    // ... существующий код опроса и выдачи ...
+
+    dks_poll ();    /* <-- опрос S‑терминалов ДКС */
+
+    // ... возврат ...
+}
+4. Новый код (вставьте в конец файла перед завершающей })
+/* ==================================================================
+ *  Вставка в besm6_tty.c: эмуляция S‑терминалов ДКС (КАДОПАМ‑КРК)
+ *  Поддержка до 48 терминалов.
+ *  Выдача символов направляется активному S‑терминалу направления.
+ * ==================================================================
+ */
+
+#include <unistd.h>
+
+/* ── Внешние переменные и функция из besm6_cpu.c ─────────────── */
+extern uint16_t kadopam_mem[65536];
+extern int      kadopam_auto_reply;
+extern void     kadopam_trigger_interrupt (int type);
+
+#define MAX_DKS_TERM  48
+
+struct dks_term {
+    int active;          /* 1 – терминал зарегистрирован           */
+    int dir;             /* направление КРК (0 или 1)             */
+    int base_addr;       /* базовый адрес буфера в КАДОПАМ       */
+    int unit;            /* индекс tty_unit для сетевого обмена  */
+    int fd;              /* файловый дескриптор сокета           */
+};
+
+static struct dks_term dks_terms[MAX_DKS_TERM];
+static int dks_num = 0;
+static int dks_next_addr = 0x2000;
+
+/* Активный (последний подключённый) S‑терминал для каждого напр. */
+static int active_dks_term[2] = { -1, -1 };
+
+void dks_init (void)
+{
+    int i;
+    for (i = 0; i < MAX_DKS_TERM; i++) {
+        dks_terms[i].active    = 0;
+        dks_terms[i].dir       = 0;
+        dks_terms[i].base_addr = 0;
+        dks_terms[i].unit      = -1;
+        dks_terms[i].fd        = -1;
+    }
+    dks_num = 0;
+    active_dks_term[0] = -1;
+    active_dks_term[1] = -1;
+}
+
+int dks_connect (int dir, int unit)
+{
+    if (dks_num >= MAX_DKS_TERM) return -1;
+    if (dir < 0 || dir > 1)     return -2;
+
+    struct dks_term *t = &dks_terms[dks_num];
+    t->active    = 1;
+    t->dir       = dir;
+    t->unit      = unit;
+
+    t->base_addr = dks_next_addr;
+    dks_next_addr += 0x100;
+    if (dks_next_addr > 0xEFFF)
+        dks_next_addr = 0x2000;
+
+    if (unit >= 0 && unit <= 24) {
+        t->fd = tty_line[unit+1].fd;
+    } else {
+        t->fd = -1;
+    }
+
+    /* Делаем этот терминал активным для своего направления        */
+    active_dks_term[dir] = dks_num;
+
+    dks_num++;
+    sim_printf ("DKS terminal connected: dir=%d, base=0x%04x, unit=%d (active)\n",
+                dir, t->base_addr, unit);
+    return 0;
+}
+
+/*
+ * Запись в H‑буфер (абуфh).  addr – адрес (0x0132 или 0x0032).
+ * Символ передаётся только активному S‑терминалу этого направления.
+ */
+void dks_write_char (int addr, uint16_t word)
+{
+    int dir = (addr == 0x0132) ? 0 : 1;   /* определить направление */
+    int idx = active_dks_term[dir];
+    if (idx < 0 || idx >= dks_num) return;  /* нет активного терминала */
+    struct dks_term *t = &dks_terms[idx];
+    if (!t->active || t->dir != dir) return;
+
+    if (t->fd >= 0) {
+        char buf[2];
+        buf[0] = (word >> 8) & 0xFF;
+        buf[1] = word & 0xFF;
+        write (t->fd, buf, 2);
+    }
+}
+
+void dks_poll (void)
+{
+    int i;
+    for (i = 0; i < dks_num; i++) {
+        struct dks_term *t = &dks_terms[i];
+        if (!t->active || t->fd < 0) continue;
+
+        char buf[2];
+        int n = read (t->fd, buf, 2);
+        if (n > 0) {
+            uint16_t val = 0;
+            if (n >= 1) val  = (unsigned char)buf[0] << 8;
+            if (n >= 2) val |= (unsigned char)buf[1];
+
+            kadopam_mem[t->base_addr] = val;
+
+            if (kadopam_auto_reply) {
+                kadopam_trigger_interrupt (6);
+            }
+        }
+    }
+}
+Проверка интеграции
+Убедитесь, что в besm6_cpu.c объявлены как внешние:
+
+c
+extern uint16_t kadopam_mem[65536];
+extern int      kadopam_auto_reply;
+extern void     kadopam_trigger_interrupt (int type);
+
+и что в функции cmd_033 (или где обрабатывается 032) используется
+
+read_032/write_032 из нового кода (с этими именами). Это уже было
+сделано ранее.
+
+Теперь эмулятор сможет обслуживать S‑терминалы через стандартные линии
+tty.
+
+
