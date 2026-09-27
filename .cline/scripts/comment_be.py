@@ -16,15 +16,40 @@ import sys, os, re, shutil
 S51 = '*' * 51
 
 def block(title, body=None):
-    r = ['\n', S51 + '\n']
-    r.append(('* ' + title).ljust(49) + ' *\n')
+    """Генерировать блок-комментарий в формате БЕМШ.
+    Каждая строка начинается с '*' (комментарий БЕМШ).
+    Формат: * текст (макс 78 символов — лимит БЕМШ)
+    """
+    r = ['\n']
+    r.append('* ' + title[:76] + '\n')
     if body:
         for b in body:
-            r.append(('*   ' + b).ljust(49) + ' *\n')
-    r.append(S51 + '\n')
+            r.append('*   ' + b[:74] + '\n')
+    r.append('*\n')
     return r
 
 COL_COMMENT = 40  # колонка для начала «  , комментарий»
+
+def _norm_cyrr(s):
+    """
+    Normalize Cyrillic-lookalike letters to ASCII (МАДЛЕН Cyrillic encoding).
+    МАДЛЕН files may use Cyrillic В, О, С, Р, Н, М, К, А, Е, Т, Х instead of
+    Latin B, O, C, P, H, M, K, A, E, T, X.
+    """
+    return s.translate(str.maketrans(
+        'АВЕКМНОРСТХЕ',
+        'ABEKMHOPCTXE',
+    ))
+
+
+def _is_madlen_datadir(tok):
+    """Check if a token is a МАДЛЕН data directive (BSS with operand, LOG),
+    including Cyrillic lookalikes (В=B, etc.). Strips commas for МАДЛЕН syntax."""
+    t = _norm_cyrr(tok.strip(',').upper())
+    if t.startswith('BSS') or t == 'LOG':
+        return True
+    return False
+
 
 def _header(lines):
     """Извлечь и распечатать шапку модуля: имя, СТАРТ, регистры, УПОТР, ВХОД, ВНЕШ."""
@@ -203,11 +228,14 @@ ALL_INSTRS = set(_OPCODE_TABLE.keys()) | set(MADLEN_TO_BEMSH.keys()) | {
 def is_instr(tok):
     t = tok.upper().strip()
     if t in ALL_INSTRS: return True
+    # МАДЛЕН Cyrillic look-alikes (В→B): also check normalized form
+    tn = _norm_cyrr(t)
+    if tn in ALL_INSTRS: return True
     for p in ('СТАРТ', 'ВНЕШ', 'КОНД', 'ВХОД', 'УПОТР', 'ФИНИШ',
               'ЭКВИВ', 'СЧМАК', 'УИА', 'СЧИ', 'СЛИА', 'ВЧОБ',
               'ПИНО', 'ЦИКЛ', 'УИИ', 'УИМ', 'СЧИМ',
               'START', 'EXTERN', 'ENTRY', 'EQUIV', 'FINISH', 'BSS'):
-        if t.startswith(p): return True
+        if t.startswith(p) or tn.startswith(p): return True
     # Normalize commas: ',bss,' → 'BSS'
     tc = t.strip(',')
     if tc in ALL_INSTRS: return True
@@ -244,9 +272,91 @@ def _madlen_to_bemsh(instr):
     u = instr.upper().strip()
     return MADLEN_TO_BEMSH.get(u)
 
-def gen(instr, op):
+def _build_const_xref(lines, procs):
+    """Построить перекрёстную ссылку: имя переменной КОНД/ПАМ → набор процедур.
+    Возвращает dict: label → {'n': int, 'procs': [str, ...]}.
+    """
+    import re as _re
+
+    # Собираем все метки КОНД/ПАМ (только латиница + цифры)
+    const_labels = set()
+    for raw in lines:
+        s = raw.rstrip('\n').strip()
+        if not s:
+            continue
+        parts = s.split()
+        if not parts:
+            continue
+        # Проверяем, что на строке есть директива данных
+        upparts = [p.upper() for p in parts]
+        has_data_dir = ('КОНД' in upparts or 'КОНК' in upparts or 'ПАМ' in upparts
+                        or 'LOG' in upparts
+                        or any(_is_madlen_datadir(p) for p in parts))
+        # BSS без операнда = маркер процедуры (НЕ данные)
+        if has_data_dir and 'BSS' in upparts and len(parts) <= 2:
+            continue
+        if not has_data_dir:
+            continue
+        # Первая метка — имя константы (только латиница)
+        lbl = parts[0]
+        if lbl.upper() in ('Б', 'Е', 'М', 'КОНД', 'ПАМ', 'КОНК'):
+            continue
+        if _is_madlen_datadir(lbl):
+            continue
+        if lbl.isalpha():
+            const_labels.add(lbl)
+
+    if not const_labels:
+        return {}
+
+    # Для быстрого поиска: proc_idx[lineno] → proc_name
+    proc_idx = {}
+    for p in procs:
+        for ln in range(p['start'], p['end']):
+            proc_idx[ln] = p['name']
+
+    # Ищем ссылки: в операндах инструкций, НЕ в определяющей строке
+    var_refs = {lbl: set() for lbl in const_labels}
+    for lineno, raw in enumerate(lines, start=1):
+        s = raw.rstrip('\n').strip()
+        if not s:
+            continue
+        parts = s.split()
+        if not parts:
+            continue
+        first = parts[0]
+        # Пропустить определяющую строку константы
+        if first in const_labels and len(parts) > 1:
+            up1 = parts[1].upper() if len(parts) > 1 else ''
+            if up1 in ('КОНД', 'ПАМ', 'КОНК', 'LOG'):
+                continue
+            if _is_madlen_datadir(up1) and 'BSS' in _norm_cyrr(up1).upper() and len(parts) > 2:
+                continue
+        # Проверить метки в инструкциях и директивах
+        for lbl in const_labels:
+            if lbl.upper() in ('КОНД', 'ПАМ', 'КОНК', 'BSS', 'LOG'):
+                continue
+            if _re.search(r'\b' + lbl + r'\b', s):
+                # Исключить совпадение имени с директивой/меткой
+                if s.startswith(lbl + ' ') or s.startswith(lbl + '\t'):
+                    continue
+                proc = proc_idx.get(lineno)
+                if proc:
+                    var_refs[lbl].add(proc)
+
+    # Формируем результат
+    result = {}
+    for lbl, proc_set in var_refs.items():
+        if proc_set:
+            sorted_procs = sorted(proc_set)
+            result[lbl] = {'n': len(sorted_procs), 'procs': sorted_procs}
+    return result
+
+def gen(instr, op, label=None, const_xref=None):
     """Генерация текста комментария по инструкции и операнду.
     Таблица из rukava.be: КОП → МАДЛЕН → БЕМШ → описание.
+    Для КОНД: label и const_xref позволяют указать, какие процедуры
+    задействуют константу (перекрёстная ссылка).
     """
     i = (instr or '').upper().strip()
     o = (op or '').strip()
@@ -267,7 +377,7 @@ def gen(instr, op):
 
     # ── СЧ (XTA 010) — Считывание ──
     if i == 'СЧ':
-        if not o: return 'СМ := стекло (стек -> SM)'
+        if not o: return 'загрузка вершины стека -> СМ'
         if o.startswith('(М'):
             m = re.search(r'М(\d+)', o)
             return f'СМ := (М{m.group(1)}) [косвенно]' if m else 'СМ := (Мx) [косв]'
@@ -536,11 +646,27 @@ def gen(instr, op):
     if i.startswith('ПАМ'):
         n = re.sub(r'[^0-9]', '', o[:6]) or '1'
         return 'резерв ' + n + ' слов'
-    if i.startswith('КОНД'):
+    if i.startswith('КОНД') or i.startswith('КОНК') or i == 'LOG':
+        # Приоритет: перекрёстная ссылка (процедуры) → иначе значение
+        if label and const_xref and label in const_xref:
+            info = const_xref[label]
+            procs_list = ', '.join(info['procs']) if info['procs'] else '?'
+            n = info['n']
+            return f'→ {procs_list} [{n}]'[:25]
+        # Фолбэк: старое поведение — показать значение
         lits = re.findall(r"В'[^']*'", o)
         if lits: return lits[0][:25]
         return o.split()[0][:20] if o.split() else 'константа'
-    if i.startswith('ВНЕШ'):  return 'внешняя ссылка'
+    if i == 'BSS' or _norm_cyrr(i) == 'BSS':
+        if not o or not o.strip()[0].isdigit():
+            return None
+        n = re.sub(r'[^0-9]', '', o[:6]) or '1'
+        if label and const_xref and label in const_xref:
+            info = const_xref[label]
+            procs_list = ', '.join(info['procs']) if info['procs'] else '?'
+            return f'→ {procs_list} [{len(info["procs"])}]'[:25]
+        return 'резерв ' + n + ' слов'
+    if i.startswith('ВНЕШ'):  return ''
     if i.startswith('ВХОД'):  return 'точка входа'
     if i.startswith('ЭКВИВ'): return 'эквивалент'
     if i.startswith('УПОТР'): return 'базовый регистр'
@@ -641,7 +767,7 @@ def detect_procedures(lines):
         if not words:
             return None, None, None
         w0 = words[0]
-        if w0 in KNOWN:
+        if w0 in KNOWN or w0.upper() in KNOWN:
             return None, w0, ' '.join(words[1:]) if len(words) > 1 else ''
         lbl = w0
         if len(words) < 2:
@@ -682,7 +808,8 @@ def detect_procedures(lines):
             continue
 
         # НОП/BSS — маркер начала процедуры
-        if ni in ('НОП', 'BSS') and lbl and i + 1 > hdr_end:
+        ni_n = _norm_cyrr(ni)
+        if (ni in ('НОП', 'BSS') or ni_n == 'BSS') and lbl and i + 1 > hdr_end:
             if cur_start is not None:
                 procs.append({'name': cur_name, 'start': cur_start, 'end': i + 1})
             cur_start = i + 1
@@ -787,6 +914,15 @@ def process(inp, outp=None):
         print(f'  [{p["start"]:4d}-{p["end"]:4d}] {p["name"]:12s}  РЕГ={regs}')
     print('─────────────────────')
 
+    # ── Перекрёстная ссылка на константы КОНД/КОНК/ПАМ ──
+    const_xref = _build_const_xref(lines, procs)
+    if const_xref:
+        print(f'─── КОНСТАНТЫ с перекрёстными ссылками: {len(const_xref)} ───')
+        for lbl, info in sorted(const_xref.items()):
+            procs_str = ', '.join(info['procs'])
+            print(f'  {lbl:16s} → {procs_str}')
+        print('─────────────────────')
+
     out = []
     header_inserted = False
     line_no = 0
@@ -816,7 +952,7 @@ def process(inp, outp=None):
         # Парсим чистую строку (без существующего комментария) для gen()
         clean = _strip_comment(raw.rstrip('\n'))
         ci = parse(clean + '\n')
-        c = gen(ci['instr'], ci['op'])
+        c = gen(ci['instr'], ci['op'], label=ci.get('label'), const_xref=const_xref)
         out.append(ic(raw, c))
         # ── Вставить блок шапки после СТАРТ/START ──
         ni = (info['instr'] or '').upper().strip()
