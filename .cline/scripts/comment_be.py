@@ -245,9 +245,9 @@ def parse(raw):
     s = raw.rstrip('\n').replace('\t', ' ').strip()
     if not s:
         return dict(blank=True, sep=False, comm=False, label=None, instr=None, op='', rest='')
-    if s == '*':
+    if s in ('*', 'С'):
         return dict(blank=False, sep=True, comm=False, label=None, instr=None, op='', rest='')
-    if s[0] == '*':
+    if s[0] == '*' or (s[0] == 'С' and (len(s) == 1 or not s[1].isalpha())):
         return dict(blank=False, sep=False, comm=True, label=None, instr=None, op='', rest=s[1:])
     parts = s.split(None, 1)
     first = parts[0]
@@ -685,7 +685,7 @@ def prescan(lines):
     vnesh = []
     for raw in lines:
         s = raw.rstrip('\n').expandtabs(8).strip()
-        if not s or s[0] == '*':
+        if not s or s[0] == '*' or (s[0] == 'С' and (len(s) == 1 or not s[1].isalpha())):
             continue
         s = re.sub(r'\s{2,},.*$', '', s).strip()
         if not s:
@@ -761,7 +761,8 @@ def detect_procedures(lines):
 
     def _parse(raw):
         s = _clean(raw.rstrip('\n').expandtabs(8))
-        if not s or s[0] == '*':
+        is_comm = s and (s[0] == '*' or (s[0] == 'С' and (len(s) == 1 or not s[1].isalpha())))
+        if not s or is_comm:
             return None, None, None
         words = s.split()
         if not words:
