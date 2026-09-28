@@ -5,7 +5,7 @@
 # Формирует .b6 файл из МАДЛЕН-исходника:
 #   - Заголовок Б6 (шифр, лента, бутстрап)
 #   - Директивы Б6 (*name, *no list, *assembler)
-#   - Исходник (strip комментариев '.' и инлайн '.комментарий')
+#   - Исходник (конвертация комментариев .→С)
 #   - Хвост (*execute, *end file, еконец)
 
 set -e
@@ -20,6 +20,9 @@ if [ -z "$SRC" ]; then
 fi
 
 # Генерируем .b6 из МАДЛЕН-исходника
+# Правила конвертации комментариев:
+#   - Полные строки ".текст" → "Стекст" (С в позиции 0)
+#   - Инлайн " .текст" после операнда → ОСТАВИТЬ как есть
 python3 - "$SRC" "$NAME" "$B6" << 'PYEOF'
 import re, sys
 
@@ -42,13 +45,13 @@ out = []
 for line in lines:
     raw = line.rstrip('\n')
     stripped = raw.strip()
+    # Строка-комментарий: начинается с '.' (с учётом пробелов)
     if stripped.startswith('.'):
-        out.append('')
+        comment_text = stripped[1:].lstrip()
+        out.append('С ' + comment_text if comment_text else 'С')
         continue
-    if '.' in raw and not stripped.startswith('.'):
-        new_line = re.sub(r' \..*$', '', raw)
-        out.append(new_line)
-        continue
+    # Инлайн-комментарии после операнда (" .текст") — оставляем как есть
+    # МАДЛЕН распознаёт "." после пробела/TAB как инлайн-комментарий
     out.append(raw)
 
 with open(b6, 'w', encoding='utf-8') as f:
