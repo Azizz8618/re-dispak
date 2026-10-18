@@ -110,13 +110,13 @@ triggers: ["comment_be", "комментировать .be", "шапки про�
 ## 3. Расположение
 
 ```
-~/Yandex.Disk/re_dispak/re-dispak/.cline/scripts/comment_be.py
+~/Yandex.Disk/re-dispak/.cline/scripts/comment_be.py
 ```
 
 ## 4. Использование
 
 ```bash
-cd ~/Yandex.Disk/re_dispak/re-dispak
+cd ~/Yandex.Disk/re-dispak
 python3 .cline/scripts/comment_be.py <input.be> [output.be]
 ```
 

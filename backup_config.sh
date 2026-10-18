@@ -2,7 +2,7 @@
 # backup_config.sh — резервное копирование конфигурации проекта
 # Запуск: ./backup_config.sh
 
-PROJECT_DIR="/home/azizz/Yandex.Disk/re_dispak/re-dispak"
+PROJECT_DIR="/home/azizz/Yandex.Disk/re-dispak"
 BACKUP_BASE="/home/azizz/Yandex.Disk/config_backup"
 PROJECT_NAME="re-dispak"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)

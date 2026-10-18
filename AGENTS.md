@@ -690,7 +690,7 @@ tests/<имя>/
 
 ## 8. Документация
 
-- `~/Yandex.Disk/re_dispak/re-dispak/RUKDKS` — документация ДКС
+- `~/Yandex.Disk/re-dispak/RUKDKS` — документация ДКС
 - `~/dispak/Input-Format` — формат входных файлов
 - `~/dispak/README.md` — описание эмулятора
 

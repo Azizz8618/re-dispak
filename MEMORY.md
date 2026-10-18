@@ -3,7 +3,7 @@
 ## Контекст
 - Реверс-инжиниринг ОС ДИСПАК (БЭСМ-6): ассемблер БЕМШ, эмулятор dispak.
 - Язык: Perl (asm.pl, скрипты), Python3 (comment_be.py), БЕМШ (.be файлы).
-- Репозиторий: ~/Yandex.Disk/re_dispak/re-dispak/
+- Репозиторий: ~/Yandex.Disk/re-dispak/
 - Remote: Azizz8618/re-dispak (SSH)
 
 ## Предпочтения пользователя
