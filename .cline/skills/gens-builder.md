@@ -1,0 +1,1 @@
+/home/azizz/.cline/skills/gens-builder/SKILL.md
