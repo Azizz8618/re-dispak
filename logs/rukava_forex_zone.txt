@@ -1,0 +1,25 @@
+PROTOKOL: rukava.be — zapis o PERSO-obraze FOREX 5.00 v zone 0o2300 diska 2348
+DATA: 19.11.2026
+REPO: re-dispak (/home/azizz/Yandex.Disk/re-dispak)
+
+IZMENENO V rukava.be (stroki 2959-2961, kontse razdela karty zon 2348):
+*|  02300-02304 |  *PERSO: /FOREX 5.00/ (RE-FOREX, 19.11.26) | 1201 | 19.11.26 |
+*|              |   РЕКОНСТРУКЦИЯ ФОРЭКС ИПМ (5.00); ЗАПИСАНА В РАБОЧУЮ КОПИЮ
+*|              |   2348 ЧЕРЕЗ tests/install-forex-perso.sh; ЭТАЛОН НЕ ИЗМЕНЯЕТСЯ.
+
+Format stroki: | zony | soderzhimoe | data | — analogichno sosednim
+*|  02150-02167 ..., *|  02570 ... . Zony ukazany v vosmerichnom vide,
+kak i sosednie; 0o2300..0o2304 == decimal 1216..1220.
+
+Svyazannyy progon (v re-forex, /tmp/.private/azizz/opencode/re-forex):
+$ python3 tools/build_forex_perso.py            -> rc=0
+  sha256(build/FOREX_PERSO_2300.bin) = 2cc2fbbec28883e45bb62ee72d6c4ed9747ce582ad1e6b39efd87d66c157e2b6
+  5120 slov / 5 zon; TEXT-metki "FOREX 5.00" i "19.11.2026"
+$ bash tests/install-forex-perso.sh             -> rc=0
+  5 zon rabochey kopii zapisany i pokbaytovo sovpadayut s obrazom
+  etaon SHA 543dac9ac85693fdf94edc02bc289b7eb2fd542d52f27b7d96de71bfba03f337 (do == posle)
+$ bash tests/run-glissade-forex.sh              -> rc=0
+  14 strok rezultata sovpadayut s etalonom
+
+ETALON /usr/local/share/besm6/2348 NE IZMENYALSHA.
+Подробности: re-forex/docs/21-rukava-forex-zone.md.
