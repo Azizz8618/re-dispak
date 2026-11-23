@@ -21,6 +21,12 @@
 * VI. РАБОТА С ПРОГРАММАМИ СТАТИСТИКИ.
 * (ФАЙЛ RUKAV2.BE)
 *
+* VII. ТРЕНАЖЁР «ГЛИССАДА-6» В PERSO-ЗОНЕ 2700(8) ТОМА 2348.
+*      (СМ. НИЖЕ, РАЗДЕЛ VII)
+*
+* VIII. ФОРТРАН-ПОРТ ГРАФОР В PERSO-ЗОНАХ 3050(8)..3240(8) ТОМА 2348.
+*      (СМ. НИЖЕ, РАЗДЕЛ VIII)
+*
 ***********************************************************
 *
 * СПРАВОЧНЫЕ МАТЕРИАЛЫ  О С  Д И С П А К  СОСТОЯТ ИЗ
@@ -3202,3 +3208,85 @@
 *+--------------+--------------------------------------------------------+------+*
 ***********************************************************
 
+
+***********************************************************
+* VII. ТРЕНАЖЁР «ГЛИССАДА-6» НА БОЕВОМ ДИСКЕ
+***********************************************************
+*
+* ТОМ:   2348, tmp-файл simh/BESM6/MD/EC5061/2348
+* ЗОНА:  2700(8) = 1472(10), 8 зон по 1024 слова
+* РАНТАЙМ ПАСКАЛЯ: зоны 2570(8)..2637(8) = 1400..1447(10),
+*   перенесены с рабочего диска; при отсутствии полного диапазона
+*   загрузчик печатает "ИСПОРЧЕНЫ ПОДПРОГРАММЫ: PASDD1, P/SYS..." и
+*   *CALL GLDIAL не запускается.
+* ВЫЗОВ: *PERSО:402700 ; *PERSО:402570,CONT ; *CALL GLDIAL
+*
+* СОСТАВ ЗОНЫ: GLDIAL (Паскаль-оболочка), Fortran-ядро
+* GLAUTO, GLPROIZ, GLTTX, GLGAIN, GLKM, GLKMA, GLINITD,
+* GLRECF, GLSCORE, GLFAULT, GLRELF, GLCONF, GLFUEL, GLACC,
+* GLNUMR, GLOUT и таблицы /APGAIN/, /TTXDAT/, /RELF/,
+* /CONFG/, /FUELP/, /FUELMS/, /KMCTL/.
+*
+* НАЗНАЧЕНИЕ: посадка по глиссаде 3 град с 15 км, пять типов
+* самолётов, ручное управление и пульт инструктора,
+* адаптивный шаг, рельеф местности и запас топлива.
+*
+* ОПЕРАТОР: HLP 1/2/3 - справка пилота, инструктора и задания.
+* ГОРЯЧИЕ КЛАВИШИ (одна литера + ПП): E/Q, W/S, A/D, R/F,
+* X, P, N/T, 1/2/3.
+*
+* ПОДРОБНОСТИ: ~/Yandex.Disk/re-glissade/README.md,
+* docs/analysis/kadr-atsipu.md, goryachie-klavishi.md.
+*
+***********************************************************
+
+
+***********************************************************
+* VIII. ФОРТРАН-ПОРТ БИБЛИОТЕКИ 22 ГРАФОР-СУД В PERSO-ЗОНАХ
+*       3050(8)..3240(8) ТОМА 2348
+***********************************************************
+*
+* ТОМ:   2348, рабочая копия ~/.besm6/2348; исходный образ
+*   ~/Yandex.Disk/re-niti-graph/fortran/verify/2348-niti.img
+* ЗОНА:  3050(8)..3240(8), 16 PERSO-библиотек подряд с шагом 10(8),
+*   по 1024 слова в каждой. Выделено 16384 слова (96 КБ),
+*   занято 1172 слова (6,9 КБ). Зоны с шагом 1 (например 3051(8))
+*   не работают: каталог PERSO начинается только на зоне, кратной 10(8).
+* ВЫЗОВ: *PERSО:403050,CONT ; *PERSО:403060,CONT ; ... ;
+*   *PERSО:403240,CONT. Пример: verify/C1-line.b6.
+*
+* СОСТАВ ЗОН (основные точки входа):
+*   3050 PROGRAM ADDLEV IMUI THAXES MOVE1 PAGE ENDPG FRAGM ONOFF
+*   3060 ABUFF TDSECT AXES BCD SYMBOL MOVE ASTEP RDB IRDB
+*   3070 LGLINE MARKER TMLGF WHERE ARCOLC ARCIA RDB
+*   3100 HCPRSP LINEMC GIVZON RCATAL GDISC
+*   3110 BAR MOVE *TRACE* EXC50 EXC72 REGION WDB RDB
+*   3120 ANGLER NUMBER HISTGM FORFIT CROSS GFFALS
+*   3130 APPOLY LOCEXT LSSOLV ELIPS ISLINE ISOLIN
+*   3140 BLANCH BCD AXUNIT TFM FLOAT RDB TDLIM
+*   3150 BEGLEV BARS *GFATRM* ARCIB CIRC COORD
+*   3160 FNROOT FATARC E70 CIRCLE CHENSP CELL CABIN
+*   3170 LINT LINEC LEVMAP INIT HCSURF FORIF FOPEN
+*   3200 RAXES POLYG POLREG MOVE3 MOVE2 MINMAX
+*   3210 SIZLIN SETK SECANT RECT RDELP
+*   3220 WHERP VIEW TRIDIG THREED SPLINE SPIRAL
+*   3230 LOOK BITA ZINT ZAPIT YAXIS XPOL WRSTR
+*   3240 XLGAX NUMBER SYMBOL RDB TMLGF IRDB IMUI IPOI MOVE PDEV
+*
+* ПОЛНЫЙ КАТАЛОГ: ~/Yandex.Disk/re-niti-graph/fortran/verify/perso-manifest.txt
+* ГРУППЫ ИСТОЧНИКОВ: fortran/verify/perso-groups.txt
+* СБОРКА: fortran/verify/build-niti-disk.sh
+*
+* НАЗНАЧЕНИЕ: Фортран-порт 241 модуля библиотеки 22 (ГРАФОР-СУД),
+* работающий через ЭК 1210/1211 и мост PDEV. XLGAX и PDEV лежат в
+* последней зоне 3240(8), чтобы их MOVE/RDB грузились последними.
+* Системные зоны 2400(8), 2500(8), 2560(8), 2570(8)..2637(8) и
+* 2700(8)..2710(8) не перезаписаны.
+*
+* ОГОВОРКА: поток команд БЕНСОНа в эмуляторе dispak - это
+* [аналог NASA, БЕНСОН-501], не подлинный протокол НИТИ/БЭСМ-6.
+*
+* ПОДРОБНОСТИ: ~/Yandex.Disk/re-niti-graph/docs/NITI-CALL-DETAILED.md,
+* docs/PLOTTER-TEST-DRAWINGS.md, verify/native/README.md.
+*
+***********************************************************
