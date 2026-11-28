@@ -18,6 +18,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 HERE = ROOT / "ai" / "карты"
 
+# В исходниках смешаны кириллица и латиница (ЕNQ/DЕQ, SWCV/СWCV), а также
+# регистр (РЯО2/ряо2). Для сравнения символов нормализуем латинские гомоглифы
+# в кириллические и приводим к нижнему регистру.
+HOMO = str.maketrans({
+    "C": "С", "T": "Т", "A": "А", "P": "Р", "H": "Н", "E": "Е", "O": "О",
+    "B": "В", "X": "Х", "M": "М", "K": "К", "I": "І",
+    "c": "с", "t": "т", "a": "а", "p": "р", "h": "н", "e": "е", "o": "о",
+    "b": "в", "x": "х", "m": "м", "k": "к",
+})
+
+
+def norm(sym: str) -> str:
+    return sym.translate(HOMO).casefold()
+
 SRC = {p.name: p for p in ROOT.glob("*.be")}
 LINE_COUNT = {name: len(p.read_text(encoding="utf-8", errors="ignore").splitlines()) for name, p in SRC.items()}
 RAW = {p.stem[4:]: p for p in HERE.glob("raw_*.txt")}
@@ -38,10 +52,11 @@ NAMES = {
     "rukava": "РУКАВА", "rukav1": "РУКАВ1", "rukav2": "РУКАВ2", "rukdks": "РУКДКС",
 }
 BE_TO_NAME = {**{k: k.upper() for k in [p.stem for p in ROOT.glob("*.be")]}, **NAMES}
+NAME_TO_BE = {v: k for k, v in BE_TO_NAME.items()}
 
 
 def load_symbols(name: str) -> set[str]:
-    """Все метки и ВХОД-символы модуля из raw-фактов."""
+    """Метки, ВХОД-символы и entry-определения из .be.tab модуля."""
     p = RAW.get(name)
     if not p:
         return set()
@@ -54,12 +69,20 @@ def load_symbols(name: str) -> set[str]:
         elif not line.startswith("--- ") and "|" in line and line.strip()[:1].isdigit():
             cells = [c.strip() for c in line.split("|")]
             if section.startswith("ПОЛНЫЙ ПЕРЕЧЕНЬ МЕТОК") and len(cells) >= 3:
-                out.add(cells[1].strip("`"))
+                out.add(norm(cells[1].strip("`")))
             elif section.startswith("ВХОД ") and len(cells) >= 2:
                 for t in cells[1].split(","):
                     t = t.strip(" `")
                     if t and " " not in t and "(" not in t and ")" not in t:
-                        out.add(t)
+                        out.add(norm(t))
+    # Таблица символов листинга: "<адрес> 0 <ИМЯ> entry <МОДУЛЬ>".
+    stem = NAME_TO_BE.get(name, name.lower())
+    tab = ROOT / f"{stem}.be.tab"
+    if tab.exists():
+        for line in tab.read_text(encoding="utf-8", errors="ignore").splitlines():
+            parts = line.split()
+            if len(parts) >= 3:
+                out.add(norm(parts[2]))
     return out
 
 
@@ -97,9 +120,9 @@ def main() -> int:
                 if not sym or " " in sym or "(" in sym or ")" in sym or sym.startswith("'"):
                     continue
                 links += 1
-                if sym not in known:
+                if norm(sym) not in known:
                     unresolved += 1
-                    issues.append(f"СВЯЗЬ: {owner} -> {tname}: символ {sym} не найден ни в метках, ни во ВХОД {tname}")
+                    issues.append(f"СВЯЗЬ: {owner} -> {tname}: символ {sym} не найден ни в метках, ни во ВХОД, ни в .be.tab {tname}")
     print(f"Проверено внешних связей: {links}; неразрешённых: {unresolved}")
 
     # 3. Согласованность СТАРТ
